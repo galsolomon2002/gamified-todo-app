@@ -7,9 +7,13 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
-import { supabase } from '../../lib/supabase'; // ודאי שהנתיב תואם
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = 'https://gqlmcecwilagtgncglrb.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxbG1jZWN3aWxhZ3RnbmNnbHJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ1OTkyNjcsImV4cCI6MjA3MDE3NTI2N30.vyKkD0WJBXDkKALHsVAw03WavSswONWJlsE7sW1gwF0';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type Task = {
   id: string;
@@ -17,63 +21,83 @@ type Task = {
   difficulty: 'easy' | 'medium' | 'hard';
   completed: boolean;
   points: number;
+  time?: string;
 };
+
+const pointsMap = {
+  easy: 10,
+  medium: 25,
+  hard: 50,
+};
+
+function analyzeTaskDifficulty(title: string): 'easy' | 'medium' | 'hard' {
+  const lowerTitle = title.toLowerCase();
+  const wordCount = title.trim().split(/\s+/).length;
+  const hardKeywords = ['פרויקט', 'בנק', 'מצגת', 'מבחן', 'טסט', 'פגישה חשובה'];
+  const mediumKeywords = ['לתאם', 'לסדר', 'לקנות', 'להתקשר', 'לקבוע'];
+  if (hardKeywords.some(word => lowerTitle.includes(word))) return 'hard';
+  if (mediumKeywords.some(word => lowerTitle.includes(word)) || wordCount > 5) return 'medium';
+  return 'easy';
+}
 
 export default function TasksScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTask, setNewTask] = useState('');
-  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
-  const [loading, setLoading] = useState(false);
-
-  const pointsMap = {
-    easy: 10,
-    medium: 25,
-    hard: 50,
-  };
-
-  const fetchTasks = async () => {
-    setLoading(true);
-    const { data, error } = await supabase.from('tasks').select('*');
-    if (error) Alert.alert('שגיאה בשליפת משימות', error.message);
-    else setTasks(data as Task[]);
-    setLoading(false);
-  };
+  const [taskTime, setTaskTime] = useState<Date>(new Date());
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   useEffect(() => {
     fetchTasks();
   }, []);
 
-  const addTask = async () => {
-    if (!newTask) return;
-    const task: Omit<Task, 'id'> = {
-      title: newTask,
-      difficulty,
-      completed: false,
-      points: pointsMap[difficulty],
-    };
-
-    const { data, error } = await supabase.from('tasks').insert([task]).select();
-    if (error) Alert.alert('שגיאה בהוספת משימה', error.message);
-    else if (data) setTasks(prev => [...prev, data[0]]);
-
-    setNewTask('');
+  const fetchTasks = async () => {
+    const { data, error } = await supabase.from('tasks').select('*');
+    if (error) console.error('שגיאה בשליפת משימות:', error);
+    else setTasks(data as Task[]);
   };
 
-  const toggleCompleteTask = async (id: string, current: boolean) => {
+  const addTask = async () => {
+    if (!newTask.trim()) return;
+    const difficulty = analyzeTaskDifficulty(newTask);
     const { data, error } = await supabase
       .from('tasks')
-      .update({ completed: !current })
-      .eq('id', id)
-      .select();
-
-    if (error) Alert.alert('שגיאה בעדכון משימה', error.message);
-    else if (data) {
-      setTasks(prev =>
-        prev.map(task =>
-          task.id === id ? { ...task, completed: !current } : task
-        )
-      );
+      .insert({
+        title: newTask,
+        difficulty,
+        completed: false,
+        points: pointsMap[difficulty],
+        time: taskTime.toISOString(),
+      })
+      .select()
+      .single();
+    if (error) {
+      console.error('שגיאה בהוספת משימה:', error);
+      return;
     }
+    setTasks([...tasks, data as Task]);
+    setNewTask('');
+    setTaskTime(new Date());
+  };
+
+  const toggleComplete = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    const updated = { ...task, completed: !task.completed };
+    const { error } = await supabase.from('tasks').update(updated).eq('id', id);
+    if (error) {
+      console.error('שגיאה בעדכון משימה:', error);
+      return;
+    }
+    setTasks(prev => prev.map(t => (t.id === id ? updated : t)));
+  };
+
+  const deleteTask = async (id: string) => {
+    const { error } = await supabase.from('tasks').delete().eq('id', id);
+    if (error) {
+      console.error('שגיאה במחיקת משימה:', error);
+      return;
+    }
+    setTasks(prev => prev.filter(task => task.id !== id));
   };
 
   const totalPoints = tasks.reduce((sum, t) => sum + (t.completed ? t.points : 0), 0);
@@ -83,7 +107,7 @@ export default function TasksScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.levelText}>שלב נוכחי: {currentLevel}</Text>
-      <Text style={styles.pointsText}>סה״כ נקודות: {totalPoints}</Text>
+      <Text style={styles.pointsText}>סה\"כ נקודות: {totalPoints}</Text>
 
       <View style={styles.progressWrapper}>
         <View style={[styles.progressFill, { width: `${progressToNextLevel * 100}%` }]} />
@@ -98,31 +122,43 @@ export default function TasksScreen() {
         onChangeText={setNewTask}
       />
 
-      <View style={styles.difficultyRow}>
-        {(['easy', 'medium', 'hard'] as Task['difficulty'][]).map(level => (
-          <TouchableOpacity key={level} onPress={() => setDifficulty(level)}>
-            <Text style={difficulty === level ? styles.selected : styles.unselected}>
-              {level}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <TouchableOpacity onPress={() => setShowTimePicker(true)} style={styles.timeButton}>
+        <Text style={styles.timeText}>
+          שעת ביצוע: {taskTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Text>
+      </TouchableOpacity>
 
-      <Button title="הוסף משימה" onPress={addTask} disabled={loading} />
+      {showTimePicker && (
+        <DateTimePicker
+          value={taskTime}
+          mode="time"
+          is24Hour={true}
+          display="default"
+          onChange={(event: any, selectedDate?: Date) => {
+            setShowTimePicker(false);
+            if (selectedDate) setTaskTime(selectedDate);
+          }}
+        />
+      )}
+
+      <Button title="הוסף משימה" onPress={addTask} />
 
       <FlatList
         data={tasks}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => toggleCompleteTask(item.id, item.completed)}
-            style={[styles.taskItem, item.completed && styles.taskCompleted]}
-          >
-            <Text style={styles.taskTitle}>{item.title}</Text>
-            <Text style={styles.taskPoints}>
-              {item.points} נקודות ({item.difficulty})
-            </Text>
-          </TouchableOpacity>
+          <View style={[styles.taskItem, item.completed && styles.taskCompleted]}>
+            <TouchableOpacity onPress={() => toggleComplete(item.id)} style={{ flex: 1 }}>
+              <Text style={styles.taskTitle}>{item.title}</Text>
+              <Text style={styles.taskPoints}>
+                {item.points} נקודות ({item.difficulty})
+              </Text>
+              {item.time && <Text style={styles.taskTime}>🕒 {new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => deleteTask(item.id)}>
+              <Text style={{ color: 'red', fontWeight: 'bold' }}>🗑️</Text>
+            </TouchableOpacity>
+          </View>
         )}
       />
     </View>
@@ -152,13 +188,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderRadius: 8,
   },
-  difficultyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
+  timeButton: {
     marginBottom: 10,
+    backgroundColor: '#eee',
+    padding: 10,
+    borderRadius: 8,
   },
-  selected: { fontWeight: 'bold', color: '#4FD1C5' },
-  unselected: { color: 'gray' },
+  timeText: {
+    textAlign: 'center',
+    color: '#333',
+  },
   taskItem: {
     padding: 12,
     borderRadius: 8,
@@ -166,6 +205,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#eee',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   taskCompleted: {
     backgroundColor: '#e0ffe0',
@@ -177,6 +218,10 @@ const styles = StyleSheet.create({
   },
   taskPoints: {
     fontSize: 14,
+    color: 'gray',
+  },
+  taskTime: {
+    fontSize: 12,
     color: 'gray',
   },
 });
