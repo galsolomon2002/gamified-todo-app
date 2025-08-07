@@ -1,7 +1,20 @@
 import React from 'react';
 import { View, Text, StyleSheet, Button } from 'react-native';
 
-export default function TaskCard({ task, onComplete }) {
+type Task = {
+  id: string;
+  title: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  completed: boolean;
+  points: number;
+};
+
+type Props = {
+  task: Task;
+  onComplete: () => void;
+};
+
+export default function TaskCard({ task, onComplete }: Props) {
   return (
     <View style={styles.card}>
       <Text style={task.completed ? styles.completed : styles.text}>
